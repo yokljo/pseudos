@@ -7,3 +7,7 @@ edition = "2018"
 [dependencies]
 libpseudos = {path = "../libpseudos", version = "*"}
 xachtsechs = {path = "../../xachtsechs/xachtsechs", version = "*"}
+
+[dependencies.sdl2]
+version = "0.31.0"
+features = ["image"]
