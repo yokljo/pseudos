@@ -1,9 +1,18 @@
 use crate::dos_error_codes::DosErrorCode;
-use crate::dos_file_system::{DosFileAccessMode, DosFileSystem};
+use crate::dos_file_system::{DosFileAccessMode, DosFileSeekOrigin, DosFileSystem};
 use crate::bios_loader::*;
 
-use xachtsechs::types::{EventHandler, Flag, InterruptResult, Reg, RegHalf};
+use xachtsechs::types::{EventHandler, Flag, Reg, RegHalf};
 use xachtsechs::machine8086::{INTERRUPT_TABLE_ENTRY_BYTES, Machine8086};
+
+use std::collections::VecDeque;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DosInterruptResult {
+	ShouldReturn,
+	ShouldReturnAndWaitForEvents,
+	ShouldBlockForKeypress,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MachineType {
@@ -61,6 +70,7 @@ pub struct PortStates {
 	port_61: u16,
 	crt_index_register: u16,
 	cga_status_register: u16,
+	cga_palette_register: u16,
 }
 
 impl PortStates {
@@ -69,8 +79,15 @@ impl PortStates {
 			port_61: 0,
 			crt_index_register: 0,
 			cga_status_register: 0,
+			cga_palette_register: 0,
 		}
 	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KeyPressInfo {
+	pub scan_code: u8,
+	pub ascii_char: u8,
 }
 
 #[derive(Debug)]
@@ -80,6 +97,8 @@ pub struct DosEventHandler {
 	pub port_states: PortStates,
 	pub file_system: Box<DosFileSystem>,
 	pub seconds_since_start: f64,
+	pub result: DosInterruptResult,
+	pub key_press_queue: VecDeque<KeyPressInfo>,
 }
 
 impl DosEventHandler {
@@ -125,6 +144,12 @@ impl DosEventHandler {
 		let video_int = machine.get_reg_u8(Reg::AX, RegHalf::High);
 		println!("Video interrupt: 0x{:x}", video_int);
 		match video_int {
+			0x00 => {
+				// TODO: Set video mode.
+			}
+			0x01 => {
+				// TODO: Set text-mode cursor shape.
+			}
 			0x02 => {
 				// Set cursor position.
 				let bh = machine.get_reg_u8(Reg::BX, RegHalf::High);
@@ -217,15 +242,27 @@ impl DosEventHandler {
 					_ => panic!("Unknown video 0x11 func: 0x{:x}", func11)
 				}
 			}
+			0x12 => {
+				// Alternate function select
+				let func12 = machine.get_reg_u8(Reg::BX, RegHalf::Low);
+				match func12 {
+					0x30 => {
+						// TODO: Select vertical resolution.
+					}
+					_ => panic!("Unknown video 0x12 func: 0x{:x}", func12)
+				}
+			}
 			_ => panic!("Unknown video func: 0x{:x}", video_int)
 		}
 	}
 }
 
 impl EventHandler for DosEventHandler {
-	fn handle_interrupt(&mut self, machine: &mut Machine8086, interrupt_index: u8) -> InterruptResult {
+	fn handle_interrupt(&mut self, machine: &mut Machine8086, interrupt_index: u8) {
 		// https://www.shsu.edu/~csc_tjm/spring2001/cs272/interrupt.html
-		println!("Handle interrupt: 0x{:x}", interrupt_index);
+		//println!("Handle interrupt: 0x{:x}", interrupt_index);
+		self.result = DosInterruptResult::ShouldReturn;
+		
 		match interrupt_index {
 			// BIOS Interrupts (0x00-0x1F):
 			0x02 => {
@@ -258,15 +295,21 @@ impl EventHandler for DosEventHandler {
 			0x14 => {
 				// Serial port services
 				let serial_int = machine.get_reg_u8(Reg::AX, RegHalf::High);
-				println!("Serial port interrupt: {}", serial_int);
+				//println!("Serial port interrupt: {}", serial_int);
 			}
 			0x16 => {
 				// Keyboard driver
 				let key_int = machine.get_reg_u8(Reg::AX, RegHalf::High);
-				println!("Keyboard Interrupt: 0x{:x}", key_int);
+				//println!("Keyboard Interrupt: 0x{:x}", key_int);
 				match key_int {
 					0x00 => {
 						// TODO: Wait for keypress and read character.
+						if let Some(key_press_info) = self.key_press_queue.pop_front() {
+							machine.set_reg_u8(Reg::AX, RegHalf::High, key_press_info.scan_code);
+							machine.set_reg_u8(Reg::AX, RegHalf::Low, key_press_info.ascii_char);
+						} else {
+							self.result = DosInterruptResult::ShouldBlockForKeypress;
+						}
 					}
 					0x01 => {
 						// TODO: Read key status
@@ -285,7 +328,7 @@ impl EventHandler for DosEventHandler {
 			// http://stanislavs.org/helppc/int_21.html
 			0x21 => {
 				let dos_int = machine.get_reg_u8(Reg::AX, RegHalf::High);
-				println!("DOS Interrupt: 0x{:x}", dos_int);
+				//println!("DOS Interrupt: 0x{:x}", dos_int);
 				match dos_int {
 					0x25 => {
 						// Get ES:BX and store it as an entry of the interrupt vector/table (as the IP:CS).
@@ -306,7 +349,7 @@ impl EventHandler for DosEventHandler {
 						machine.set_reg_u8(Reg::CX, RegHalf::Low, minute);
 						machine.set_reg_u8(Reg::DX, RegHalf::High, second);
 						machine.set_reg_u8(Reg::DX, RegHalf::Low, hundredths);
-						return InterruptResult::Wait;
+						self.result = DosInterruptResult::ShouldReturnAndWaitForEvents;
 					}
 					0x33 => {
 						// Modify Ctrl+Break shortcut functionality.
@@ -322,7 +365,7 @@ impl EventHandler for DosEventHandler {
 						machine.set_reg_u16(Reg::ES, interrupt_cs);
 					}
 					0x3c => {
-						// CREAT
+						// CREATE
 						let filename_addr = machine.get_seg_reg(Reg::DS, Reg::DX);
 						let filename = machine.read_null_terminated_string(filename_addr);
 						let attributes = machine.get_reg_u16(Reg::CX);
@@ -388,6 +431,33 @@ impl EventHandler for DosEventHandler {
 							}
 						}
 					}
+					0x42 => {
+						// SEEK
+						let handle = machine.get_reg_u16(Reg::BX);
+						let offset = ((machine.get_reg_u16(Reg::CX) as u32) << 16) + machine.get_reg_u16(Reg::DX) as u32;
+						let origin_mode = match machine.get_reg_u8(Reg::AX, RegHalf::Low) {
+							0 => Some(DosFileSeekOrigin::Start),
+							1 => Some(DosFileSeekOrigin::Current),
+							2 => Some(DosFileSeekOrigin::End),
+							_ => None,
+						};
+						if let Some(origin_mode) = origin_mode {
+							match self.file_system.seek(handle, offset, origin_mode) {
+								Ok(new_file_position) => {
+									machine.set_flag(Flag::Carry, false);
+									machine.set_reg_u16(Reg::AX, (new_file_position & 0xffff) as u16);
+									machine.set_reg_u16(Reg::DX, ((new_file_position >> 16) & 0xffff) as u16);
+								}
+								Err(error_code) => {
+									machine.set_flag(Flag::Carry, true);
+									machine.set_reg_u16(Reg::AX, error_code as u16);
+								}
+							}
+						} else {
+							machine.set_flag(Flag::Carry, true);
+							machine.set_reg_u16(Reg::AX, DosErrorCode::InvalidData as u16);
+						}
+					}
 					0x44 => {
 						// I/O control
 						let io_func = machine.get_reg_u8(Reg::AX, RegHalf::Low);
@@ -417,8 +487,6 @@ impl EventHandler for DosEventHandler {
 			}
 			_ => panic!("Unknown interrupt: 0x{:x}", interrupt_index)
 		}
-		
-		InterruptResult::Return
 	}
 	
 	fn handle_port_input(&mut self, machine: &mut Machine8086, port_index: u16) -> u16 {
@@ -441,12 +509,12 @@ impl EventHandler for DosEventHandler {
 			}
 			_ => panic!("Unhandled input port index: 0x{:02x}", port_index)
 		};
-		println!("Port in({}): {}", port_index, value);
+		//println!("Port in({}): {}", port_index, value);
 		value
 	}
 	
 	fn handle_port_output(&mut self, machine: &mut Machine8086, port_index: u16, value: u16) {
-		println!("Port out({}): {}", port_index, value);
+		//println!("Port out({}): {}", port_index, value);
 		match port_index {
 			0x61 => {
 				// TODO
@@ -460,6 +528,10 @@ impl EventHandler for DosEventHandler {
 			}
 			0x3d5 => {
 				// TODO: CRT data register
+			}
+			0x3d9 => {
+				// TODO: CGA palette register.
+				self.port_states.cga_palette_register = value;
 			}
 			_ => panic!("Unhandled output port index: 0x{:02x}", port_index)
 		}

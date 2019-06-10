@@ -1,6 +1,7 @@
 use crate::dos_error_codes::DosErrorCode;
 
 use std::io::Read;
+use std::io::Seek;
 
 pub trait DosFileSystem : std::fmt::Debug {
 	/// Returns a file handle if successful. Error code if not.
@@ -13,6 +14,7 @@ pub trait DosFileSystem : std::fmt::Debug {
 	fn read(&mut self, handle: u16, destination: &mut [u8]) -> Result<u16, DosErrorCode>;
 	/// Returns the byte count written. Error code if write failed.
 	fn write(&mut self, handle: u16, data: &[u8]) -> Result<u16, DosErrorCode>;
+	fn seek(&mut self, handle: u16, offset: u32, origin: DosFileSeekOrigin) -> Result<u32, DosErrorCode>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -20,6 +22,13 @@ pub enum DosFileAccessMode {
 	ReadOnly,
 	WriteOnly,
 	ReadWrite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DosFileSeekOrigin {
+	Start,
+	Current,
+	End,
 }
 
 #[derive(Debug)]
@@ -136,5 +145,26 @@ impl DosFileSystem for StandardDosFileSystem {
 	
 	fn write(&mut self, handle: u16, data: &[u8]) -> Result<u16, DosErrorCode> {
 		unimplemented!()
+	}
+	
+	fn seek(&mut self, handle: u16, offset: u32, origin: DosFileSeekOrigin) -> Result<u32, DosErrorCode> {
+		if handle == 0 {
+			Err(DosErrorCode::InvalidFileHandle)
+		} else {
+			let handle_index = (handle - 1) as usize;
+			if let Some(Some(ref mut file)) = self.file_handles.get_mut(handle_index) {
+				let seek_from = match origin {
+					DosFileSeekOrigin::Start => std::io::SeekFrom::Start(offset as u64),
+					DosFileSeekOrigin::Current => std::io::SeekFrom::Current(offset as i64),
+					DosFileSeekOrigin::End => std::io::SeekFrom::End(offset as i64),
+				};
+				match file.seek(seek_from) {
+					Ok(file_pos) => Ok(file_pos as u32),
+					Err(err) => Err(std_file_error_to_dos_error(err)),
+				}
+			} else {
+				Err(DosErrorCode::InvalidFileHandle)
+			}
+		}
 	}
 }

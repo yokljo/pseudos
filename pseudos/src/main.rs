@@ -1,10 +1,10 @@
 use std::cmp::Ordering;
 
-use libpseudos::dos_event_handler::{DosEventHandler, MachineType, PortStates};
+use libpseudos::dos_event_handler::{DosEventHandler, DosInterruptResult, KeyPressInfo, MachineType, PortStates};
 use libpseudos::dos_file_system::StandardDosFileSystem;
 use libpseudos::exe_loader::MzHeader;
 use xachtsechs::machine8086::Machine8086;
-use xachtsechs::types::{InterruptResult, Reg, RegHalf, StepResult};
+use xachtsechs::types::{Reg, RegHalf, StepResult};
 
 use sdl2::image::{LoadTexture, INIT_PNG};
 use sdl2::event::Event;
@@ -139,6 +139,29 @@ impl DosConsole {
 					Event::Quit{..} => {
 						running = false;
 					}
+					Event::Window{..} => {
+						self.draw_screen(&mut canvas, &mut dosfont_tex, true);
+					}
+					Event::KeyDown{keycode: keycode_opt, keymod, ..} => {
+						if let Some(keycode) = keycode_opt {
+							let key_index = keycode as u32;
+							let key_name = keycode.name();
+							let char_code = if let Some(char_code) = key_name.chars().next() {
+								if char_code <= 255 as char {
+									char_code as u8
+								} else {
+									0
+								}
+							} else {
+								0
+							};
+							
+							self.dos_event_handler.key_press_queue.push_back(KeyPressInfo {
+								scan_code: key_index as u8,
+								ascii_char: char_code,
+							});
+						}
+					}
 					_ => {}
 				}
 			}
@@ -150,8 +173,19 @@ impl DosConsole {
 			let num_opcodes_to_exec = 10000;
 			for _ in 0..num_opcodes_to_exec {
 				match self.machine.step(&mut self.dos_event_handler) {
-					StepResult::Interrupt(InterruptResult::Wait) => {
-						break;
+					StepResult::Interrupt => {
+						match self.dos_event_handler.result {
+							DosInterruptResult::ShouldReturn => {
+								self.machine.return_from_interrupt();
+							}
+							DosInterruptResult::ShouldReturnAndWaitForEvents => {
+								self.machine.return_from_interrupt();
+								break;
+							}
+							DosInterruptResult::ShouldBlockForKeypress => {
+								break;
+							}
+						}
 					}
 					_ => {}
 				}
@@ -183,6 +217,9 @@ fn main() {
 		port_states: PortStates::new(),
 		file_system: Box::new(StandardDosFileSystem::new("./junk/dos".into())),
 		seconds_since_start: 0.,
+		result: DosInterruptResult::ShouldReturn,
+		key_press_queue: std::collections::VecDeque::new(),
+		
 	};
 	event_handler.init_machine(&mut machine);
 
