@@ -1,0 +1,9 @@
+[package]
+name = "pseudos"
+version = "0.1.0"
+authors = ["Joshua Worth <joshua@worth.id.au>"]
+edition = "2018"
+
+[dependencies]
+libpseudos = {path = "../libpseudos", version = "*"}
+xachtsechs = {path = "../../xachtsechs/xachtsechs", version = "*"}
