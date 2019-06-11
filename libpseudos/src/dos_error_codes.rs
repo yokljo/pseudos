@@ -9,5 +9,6 @@ pub enum DosErrorCode {
 	InsufficientMemory = 0x08,
 	InvalidFileAccessMode = 0x0c,
 	InvalidData = 0x0d,
+	NoMoreFiles = 0x12,
 	FileAlreadyExists = 0x50,
 }

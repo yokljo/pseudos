@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use libpseudos::dos_event_handler::{DosEventHandler, DosInterruptResult, KeyPressInfo, MachineType, PortStates};
+use libpseudos::dos_event_handler::{DosEventHandler, DosInterruptResult, KeyModType, KeyPressInfo, MachineType, PortStates};
 use libpseudos::dos_file_system::StandardDosFileSystem;
 use libpseudos::exe_loader::MzHeader;
 use xachtsechs::machine8086::Machine8086;
@@ -15,6 +15,35 @@ use sdl2::audio::AudioSpecDesired;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::path::Path;
+
+const SCANCODE_LETTERS: &[u8] = b"qwertyuiopasdfghjklzxcvbnm";
+
+fn scancode_to_key_info(keycode: Keycode, shifted: bool) -> Option<KeyPressInfo> {
+	// http://stanislavs.org/helppc/scan_codes.html
+	let key_index = keycode as u8;
+	let (scan_code, ascii_char, shifted_ascii_char) = match keycode {
+		_ if (b'a' ..= b'z').contains(&(keycode as u8)) => {
+			let lower_ascii_char = SCANCODE_LETTERS.iter().position(|c| *c == key_index).unwrap() as u8 + 0x10;
+			(lower_ascii_char, key_index, key_index + 0x20)
+		}
+		Keycode::Slash => (0x35, 0x2f, 0x3f),
+		Keycode::Down => (0x50, 0, 0x32),
+		Keycode::Up => (0x48, 0, 0x38),
+		Keycode::Left => (0x4b, 0, 0x34),
+		Keycode::Right => (0x4d, 0, 0x36),
+		Keycode::Return => (0x1c, 0x0d, 0x0d),
+		Keycode::Escape => (0x01, 0x1b, 0x1b),
+		Keycode::Space => (0x39, 0x20, 0x20),
+		Keycode::Tab => (0x0f, 0x09, 0),
+		Keycode::PageUp => (0x49, 0, 0x39),
+		Keycode::PageDown => (0x51, 0, 0x33),
+		_ if (Keycode::F1 as u8 ..= Keycode::F12 as u8).contains(&(keycode as u8)) => {
+			(0x3b + (keycode as u8 - Keycode::F1 as u8), 0, 0)
+		}
+		_ => return None
+	};
+	Some(KeyPressInfo{scan_code, ascii_char: if shifted { shifted_ascii_char } else { ascii_char }})
+}
 
 fn get_ms_from_duration(duration: std::time::Duration) -> usize {
 	(duration.as_secs() * 1000) as usize + duration.subsec_millis() as usize
@@ -87,6 +116,12 @@ impl DosConsole {
 		}
 	}
 	
+	fn update_keymod(&mut self, keymod: sdl2::keyboard::Mod) {
+		self.dos_event_handler.set_key_mod(KeyModType::Shift, keymod.contains(sdl2::keyboard::LSHIFTMOD) || keymod.contains(sdl2::keyboard::RSHIFTMOD));
+		self.dos_event_handler.set_key_mod(KeyModType::Ctrl, keymod.contains(sdl2::keyboard::LCTRLMOD) || keymod.contains(sdl2::keyboard::RCTRLMOD));
+		self.dos_event_handler.set_key_mod(KeyModType::Alt, keymod.contains(sdl2::keyboard::LALTMOD) || keymod.contains(sdl2::keyboard::RALTMOD));
+	}
+	
 	fn run(&mut self) {
 		let mut step_count = 0;
 
@@ -143,23 +178,12 @@ impl DosConsole {
 						self.draw_screen(&mut canvas, &mut dosfont_tex, true);
 					}
 					Event::KeyDown{keycode: keycode_opt, keymod, ..} => {
+						self.update_keymod(keymod);
+						let shifted = keymod.contains(sdl2::keyboard::LSHIFTMOD) || keymod.contains(sdl2::keyboard::RSHIFTMOD);
 						if let Some(keycode) = keycode_opt {
-							let key_index = keycode as u32;
-							let key_name = keycode.name();
-							let char_code = if let Some(char_code) = key_name.chars().next() {
-								if char_code <= 255 as char {
-									char_code as u8
-								} else {
-									0
-								}
-							} else {
-								0
-							};
-							
-							self.dos_event_handler.key_press_queue.push_back(KeyPressInfo {
-								scan_code: key_index as u8,
-								ascii_char: char_code,
-							});
+							if let Some(key_info) = scancode_to_key_info(keycode, shifted) {
+								self.dos_event_handler.key_press_queue.push_back(key_info);
+							}
 						}
 					}
 					_ => {}
@@ -216,7 +240,9 @@ fn main() {
 		video_mode: MachineType::EGA.lookup_video_mode(3).unwrap(),
 		port_states: PortStates::new(),
 		file_system: Box::new(StandardDosFileSystem::new("./junk/dos".into())),
+		disk_trasnsfer_address: 0,
 		seconds_since_start: 0.,
+		key_mod: 0,
 		result: DosInterruptResult::ShouldReturn,
 		key_press_queue: std::collections::VecDeque::new(),
 		
