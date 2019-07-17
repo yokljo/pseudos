@@ -197,7 +197,7 @@ impl DosConsole {
 			let num_opcodes_to_exec = 10000;
 			for _ in 0..num_opcodes_to_exec {
 				match self.machine.step(&mut self.dos_event_handler) {
-					StepResult::Interrupt => {
+					Ok(StepResult::Interrupt) => {
 						match self.dos_event_handler.result {
 							DosInterruptResult::ShouldReturn => {
 								self.machine.return_from_interrupt();
@@ -211,13 +211,42 @@ impl DosConsole {
 							}
 						}
 					}
+					Err(err) => {
+						eprintln!("Step error: {}", err);
+						return;
+					}
 					_ => {}
 				}
 				step_count += 1;
 			}
 			
-			/*if machine.number_of_parsed_instructions > 797780 {
-				println!("MEM: {:?}", &machine.memory[0xb8000..0xb8000+0x1000]);
+			/*if self.machine.number_of_parsed_instructions > 2000000 {
+				//println!("MEM: {:?}", &machine.memory[0xb8000..0xb8000+0x1000]);
+				/*use std::io::Write;
+				println!("ds: {}", self.machine.get_reg_u16(Reg::DS));
+				let mut file = std::fs::File::create("memdmp.dat").unwrap();
+				file.write_all(&self.machine.memory);*/
+				let ds = self.machine.get_reg_u16(Reg::DS) as u32;
+				/*for i in 0..16 {
+					let addr = (ds<<4)+((i<<9)+0x8d0a);
+					let length = self.machine.peek_u16(addr) as u32;
+					let mut arrstr = "[".to_string();
+					//println!("length: {}", length);
+					for sound_index in 0..length {
+						let sound_addr = addr + ((sound_index * 2) + 2);
+						let entry = self.machine.peek_u16(sound_addr);
+						arrstr += &format!("{}, ", entry);
+						//println!("> {}", entry);
+					}
+					arrstr += "]";
+					println!("{}", arrstr);
+				}*/
+				for i in (0..256*2).step_by(2) {
+					let addr = (ds<<4)+(i+0x89f4);
+					let num = self.machine.peek_u16(addr);
+					println!("{}: {}", i/2, num);
+				}
+				
 				panic!();
 			}*/
 			

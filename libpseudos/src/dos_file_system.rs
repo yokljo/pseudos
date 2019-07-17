@@ -1,7 +1,6 @@
 use crate::dos_error_codes::DosErrorCode;
 
-use std::io::Read;
-use std::io::Seek;
+use std::io::{Read, Write, Seek};
 use std::collections::{HashMap, VecDeque};
 
 pub trait DosFileSystem : std::fmt::Debug {
@@ -17,6 +16,8 @@ pub trait DosFileSystem : std::fmt::Debug {
 	fn write(&mut self, handle: u16, data: &[u8]) -> Result<u16, DosErrorCode>;
 	/// Returns the new position within the file relative to the start. Error code if seek failed.
 	fn seek(&mut self, handle: u16, offset: u32, origin: DosFileSeekOrigin) -> Result<u32, DosErrorCode>;
+	/// Returns the new file length.
+	fn truncate(&mut self, handle: u16) -> Result<u32, DosErrorCode>;
 	fn find_first_file(&mut self, destination: &mut [u8], attributes: u16, search_spec: &[u8]) -> Result<(), DosErrorCode>;
 	fn find_next_file(&mut self, destination: &mut [u8]) -> Result<(), DosErrorCode>;
 }
@@ -238,6 +239,19 @@ impl StandardDosFileSystem {
 		}
 	}
 	
+	fn get_file_from_handle(&mut self, handle: u16) -> Result<&mut std::fs::File, DosErrorCode> {
+		if handle == 0 {
+			Err(DosErrorCode::InvalidFileHandle)
+		} else {
+			let handle_index = (handle - 1) as usize;
+			if let Some(Some(ref mut file)) = self.file_handles.get_mut(handle_index) {
+				Ok(file)
+			} else {
+				Err(DosErrorCode::InvalidFileHandle)
+			}
+		}
+	}
+	
 	/*fn get_real_filepath(&self, filename: &[u8]) -> std::path::PathBuf {
 		if filename.contains(&b'\\') {
 			unimplemented!("DOS directory mapping to real directories");
@@ -325,43 +339,45 @@ impl DosFileSystem for StandardDosFileSystem {
 	}
 	
 	fn read(&mut self, handle: u16, destination: &mut [u8]) -> Result<u16, DosErrorCode> {
-		if handle == 0 {
-			Err(DosErrorCode::InvalidFileHandle)
-		} else {
-			let handle_index = (handle - 1) as usize;
-			if let Some(Some(ref mut file)) = self.file_handles.get_mut(handle_index) {
-				match file.read(destination) {
-					Ok(read_count) => Ok(read_count as u16),
-					Err(err) => Err(std_file_error_to_dos_error(err)),
-				}
-			} else {
-				Err(DosErrorCode::InvalidFileHandle)
-			}
+		let file = self.get_file_from_handle(handle)?;
+		match file.read(destination) {
+			Ok(read_count) => Ok(read_count as u16),
+			Err(err) => Err(std_file_error_to_dos_error(err)),
 		}
 	}
 	
 	fn write(&mut self, handle: u16, data: &[u8]) -> Result<u16, DosErrorCode> {
-		unimplemented!()
+		let file = self.get_file_from_handle(handle)?;
+		match file.write(data) {
+			Ok(written_count) => Ok(written_count as u16),
+			Err(err) => Err(std_file_error_to_dos_error(err)),
+		}
 	}
 	
 	fn seek(&mut self, handle: u16, offset: u32, origin: DosFileSeekOrigin) -> Result<u32, DosErrorCode> {
-		if handle == 0 {
-			Err(DosErrorCode::InvalidFileHandle)
-		} else {
-			let handle_index = (handle - 1) as usize;
-			if let Some(Some(ref mut file)) = self.file_handles.get_mut(handle_index) {
-				let seek_from = match origin {
-					DosFileSeekOrigin::Start => std::io::SeekFrom::Start(offset as u64),
-					DosFileSeekOrigin::Current => std::io::SeekFrom::Current(offset as i64),
-					DosFileSeekOrigin::End => std::io::SeekFrom::End(offset as i64),
-				};
-				match file.seek(seek_from) {
-					Ok(file_pos) => Ok(file_pos as u32),
+		let file = self.get_file_from_handle(handle)?;
+		let seek_from = match origin {
+			DosFileSeekOrigin::Start => std::io::SeekFrom::Start(offset as u64),
+			DosFileSeekOrigin::Current => std::io::SeekFrom::Current(offset as i64),
+			DosFileSeekOrigin::End => std::io::SeekFrom::End(offset as i64),
+		};
+		match file.seek(seek_from) {
+			Ok(file_pos) => Ok(file_pos as u32),
+			Err(err) => Err(std_file_error_to_dos_error(err)),
+		}
+	}
+	
+	fn truncate(&mut self, handle: u16) -> Result<u32, DosErrorCode> {
+		let file = self.get_file_from_handle(handle)?;
+		// TODO: Use file.stream_position() when it is stabilised:
+		match file.seek(std::io::SeekFrom::Current(0)) {
+			Ok(current_pos) => {
+				match file.set_len(current_pos) {
+					Ok(_) => Ok(current_pos as u32),
 					Err(err) => Err(std_file_error_to_dos_error(err)),
 				}
-			} else {
-				Err(DosErrorCode::InvalidFileHandle)
 			}
+			Err(err) => Err(std_file_error_to_dos_error(err)),
 		}
 	}
 	
@@ -383,7 +399,6 @@ impl DosFileSystem for StandardDosFileSystem {
 		if let Some(ref mut current_file_queue) = self.current_file_queue {
 			if let Some(ref next_file) = current_file_queue.pop_front() {
 				let next_name = next_file.real_dos_name();
-				dbg!(ascii_filename_to_string(&next_name));
 				// http://stanislavs.org/helppc/int_21-4e.html
 				let filename_off = 0x1e;
 				destination[0x15..=filename_off].iter_mut().for_each(|b| *b = 0);

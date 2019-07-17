@@ -181,6 +181,9 @@ impl DosEventHandler {
 				let cursor_pos_data = ((dh as u16) << 8) + dl as u16;
 				machine.set_data_u16(&BIOS_CURSOR_POSITION[video_page as usize], cursor_pos_data);
 			}
+			0x03 => {
+				// TODO: Get cursor position and size.
+			}
 			0x06 => {
 				// Scroll the text up within a rectangular area on the active page.
 				let video_page = machine.get_data_u8(&BIOS_ACTIVE_VIDEO_PAGE);
@@ -302,7 +305,7 @@ impl EventHandler for DosEventHandler {
 				let timer_high = machine.get_data_u16(&BIOS_SYSTEM_TIMER_COUNTER_HIGH);
 				let timer = timer_low as u32 + ((timer_high as u32) << 16);
 				let new_timer = timer.wrapping_add(1);
-				println!("Time: {}", new_timer);
+				//println!("Time: {}", new_timer);
 				let new_timer_low = (new_timer & 0xffff) as u16;
 				let new_timer_high = ((new_timer >> 16) & 0xffff) as u16;
 				machine.set_data_u16(&BIOS_SYSTEM_TIMER_COUNTER_LOW, new_timer_low);
@@ -478,6 +481,44 @@ impl EventHandler for DosEventHandler {
 							}
 						}
 					}
+					0x40 => {
+						// WRITE
+						let handle = machine.get_reg_u16(Reg::BX);
+						let count = machine.get_reg_u16(Reg::CX) as usize;
+						let destination_addr = machine.get_seg_reg(Reg::DS, Reg::DX) as usize;
+						let rest_of_mem = &mut machine.memory[destination_addr..];
+						
+						if rest_of_mem.len() < count {
+							machine.set_flag(Flag::Carry, true);
+							machine.set_reg_u16(Reg::AX, DosErrorCode::InvalidData as u16);
+						} else {
+							if count == 0 {
+								// Count of 0 truncates or extends the file to the current position.
+								match self.file_system.truncate(handle) {
+									Ok(_) => {
+										machine.set_flag(Flag::Carry, false);
+										machine.set_reg_u16(Reg::AX, 0);
+									}
+									Err(error_code) => {
+										machine.set_flag(Flag::Carry, true);
+										machine.set_reg_u16(Reg::AX, error_code as u16);
+									}
+								}
+							} else {
+								let write_data = &rest_of_mem[..count];
+								match self.file_system.write(handle, write_data) {
+									Ok(read_count) => {
+										machine.set_flag(Flag::Carry, false);
+										machine.set_reg_u16(Reg::AX, read_count);
+									}
+									Err(error_code) => {
+										machine.set_flag(Flag::Carry, true);
+										machine.set_reg_u16(Reg::AX, error_code as u16);
+									}
+								}
+							}
+						}
+					}
 					0x42 => {
 						// SEEK
 						let handle = machine.get_reg_u16(Reg::BX);
@@ -577,7 +618,6 @@ impl EventHandler for DosEventHandler {
 				0xf0
 			}
 			0x3da => {
-				// TODO: 779086
 				let status = self.port_states.cga_status_register;
 				self.set_cga_vertial_retrace(false);
 				status
@@ -593,9 +633,11 @@ impl EventHandler for DosEventHandler {
 		match port_index {
 			0x42 => {
 				// TODO: PIT cassette and speaker
+				println!("PIT: {}", value);
 			}
 			0x43 => {
 				// TODO: Programmable interrupt timer (PIT), control register
+				println!("PIT Control: {}", value);
 			}
 			0x61 => {
 				self.port_states.port_61 = value;
