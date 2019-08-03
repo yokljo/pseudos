@@ -388,6 +388,13 @@ impl EventHandler for DosEventHandler {
 						machine.set_reg_u8(Reg::DX, RegHalf::Low, hundredths);
 						self.result = DosInterruptResult::ShouldReturnAndWaitForEvents;
 					}
+					0x30 => {
+						machine.set_reg_u8(Reg::AX, RegHalf::Low, 5);
+						machine.set_reg_u8(Reg::AX, RegHalf::High, 22);
+						machine.set_reg_u8(Reg::BX, RegHalf::High, 0xff);
+						machine.set_reg_u8(Reg::BX, RegHalf::Low, 0);
+						machine.set_reg_u16(Reg::CX, 0);
+					}
 					0x33 => {
 						// Modify Ctrl+Break shortcut functionality.
 						// TODO
@@ -558,6 +565,10 @@ impl EventHandler for DosEventHandler {
 							}
 							_ => println!("Unknown IO func: 0x{:x}", io_func)
 						}
+					}
+					0x4a => {
+						// Modify Allocated Memory Block (SETBLOCK)
+						unimplemented!();
 					}
 					0x4e => {
 						// Find first matching file for a filename glob.

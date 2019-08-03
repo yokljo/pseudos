@@ -26,6 +26,19 @@ fn scancode_to_key_info(keycode: Keycode, shifted: bool) -> Option<KeyPressInfo>
 			let lower_ascii_char = SCANCODE_LETTERS.iter().position(|c| *c == key_index).unwrap() as u8 + 0x10;
 			(lower_ascii_char, key_index, key_index + 0x20)
 		}
+		Keycode::Num0 => (0x0b, 0x30, 0x29),
+		Keycode::Num1 => (0x02, 0x31, 0x21),
+		Keycode::Num2 => (0x03, 0x32, 0x40),
+		Keycode::Num3 => (0x04, 0x33, 0x23),
+		Keycode::Num4 => (0x05, 0x34, 0x24),
+		Keycode::Num5 => (0x06, 0x35, 0x25),
+		Keycode::Num6 => (0x07, 0x36, 0x5e),
+		Keycode::Num7 => (0x08, 0x37, 0x26),
+		Keycode::Num8 => (0x09, 0x38, 0x2a),
+		Keycode::Num9 => (0x0a, 0x39, 0x28),
+		Keycode::Backspace => (0x0e, 0x08, 0x08),
+		Keycode::Delete => (0x53, 0x00, 0x2e),
+		Keycode::Insert => (0x52, 0x00, 0x30),
 		Keycode::Slash => (0x35, 0x2f, 0x3f),
 		Keycode::Down => (0x50, 0, 0x32),
 		Keycode::Up => (0x48, 0, 0x38),
@@ -194,7 +207,7 @@ impl DosConsole {
 			self.dos_event_handler.seconds_since_start += 54.9451/1000.;
 			self.dos_event_handler.set_cga_vertial_retrace(true);
 			
-			let num_opcodes_to_exec = 10000;
+			let num_opcodes_to_exec = 4000;
 			for _ in 0..num_opcodes_to_exec {
 				match self.machine.step(&mut self.dos_event_handler) {
 					Ok(StepResult::Interrupt) => {
@@ -252,7 +265,7 @@ impl DosConsole {
 			
 			self.draw_screen(&mut canvas, &mut dosfont_tex, false);
 
-			self.current_run_time_ms += 20;
+			self.current_run_time_ms += 5;
 			canvas.present();
 		}
 	}

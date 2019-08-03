@@ -105,8 +105,8 @@ impl MzHeader {
 		machine.set_reg_u16(Reg::IP, self.initial_ip);
 		
 		let segment_offset = (EXE_ORIGIN_PARAGRAPH + EXE_PROGRAM_SEGMENT_PREFIX_PARAGRAPHS) as u16;
-		machine.set_reg_u16(Reg::SS, self.initial_ss + segment_offset);
-		machine.set_reg_u16(Reg::CS, self.initial_cs + segment_offset);
+		machine.set_reg_u16(Reg::SS, self.initial_ss.wrapping_add(segment_offset));
+		machine.set_reg_u16(Reg::CS, self.initial_cs.wrapping_add(segment_offset));
 		
 		machine.set_reg_u16(Reg::DS, EXE_ORIGIN_PARAGRAPH as u16);
 		machine.set_reg_u16(Reg::ES, EXE_ORIGIN_PARAGRAPH as u16);
